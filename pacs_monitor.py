@@ -12,6 +12,11 @@ from email.utils import formatdate
 
 
 import os
+import time, json
+
+HEARTBEAT_INTERVAL_SEC = 8 * 3600
+HEARTBEAT_STATE_PATH = "/var/tmp/pacs_monitor_heartbeat.json"
+
 
 SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
@@ -49,6 +54,25 @@ PAT_JSON_END   = re.compile(r'"(?:end|endDate)"\s*:\s*"(?P<iso>\d{4}-\d{2}-\d{2}
 PAT_URL_END    = re.compile(r'(?:\b(?:ending_date_time|end|endDate)\s*=\s*)(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?Z?', re.IGNORECASE)
 PAT_ANY_ISO    = re.compile(r'(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?Z?')
 
+
+
+def _load_heartbeat_state():
+    try:
+        with open(HEARTBEAT_STATE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"last_heartbeat_ts": 0}
+
+def _save_heartbeat_state(state):
+    try:
+        os.makedirs(os.path.dirname(HEARTBEAT_STATE_PATH), exist_ok=True)
+        with open(HEARTBEAT_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except Exception as e:
+        print(f"Erreur sauvegarde état heartbeat: {e}")
+
+def _should_send_heartbeat(now_ts, last_ts):
+    return (now_ts - last_ts) >= HEARTBEAT_INTERVAL_SEC
 
 
 
@@ -143,6 +167,13 @@ def run_monitor(interval=10):
     print(f"\nSurveillance active — vérification toutes les {interval}s.")
     last_slots = []
 
+    # Heartbeat: init état persistant
+    try:
+        state = _load_heartbeat_state()
+    except Exception:
+        state = {"last_heartbeat_ts": 0}
+    last_hb = state.get("last_heartbeat_ts", 0)
+
     while True:
         try:
             slots = get_all_slots()
@@ -152,6 +183,8 @@ def run_monitor(interval=10):
             continue
 
         new_slots = detect_new_slots(slots, last_slots)
+        now_ts = time.time()
+
         if new_slots:
             print(f"\n=== NOUVEAUX CRÉNEAUX {datetime.now().strftime('%H:%M:%S')} ===")
             lines = []
@@ -159,7 +192,6 @@ def run_monitor(interval=10):
                 line = f"{s['date']} {s['time']}"
                 print(f"• {line}")
                 lines.append(line)
-            # Mail récapitulatif
             subject = f"[PACS] {len(new_slots)} nouveau(x) créneau(x)"
             body = "Nouveaux créneaux détectés:\n" + "\n".join(lines)
             send_email(subject, body)
@@ -167,19 +199,23 @@ def run_monitor(interval=10):
             last_slots = slots
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Aucun nouveau créneau.")
-            # Test de notif mail (désactive-le après validation)
-            send_email("[PACS] test", f"Vérification {datetime.now().strftime('%H:%M:%S')}: aucun nouveau créneau.")
 
-        # if new_slots:
-        #     print(f"\n=== NOUVEAUX CRÉNEAUX {datetime.now().strftime('%H:%M:%S')} ===")
-        #     for s in new_slots:
-        #         print(f"📅 {s['date']} à {s['time']}")
-        #         send_whatsapp(f"Nouveau créneau PACS : {s['date']} à {s['time']}")
-        #     print("=" * 40)
-        #     last_slots = slots
-        # else:
-        #     print(f"[{datetime.now().strftime('%H:%M:%S')}] Aucun nouveau créneau.")
-        #     send_whatsapp(f"No news sorry")
+        # Heartbeat toutes les 8h (aucun envoi si < 8h depuis le dernier)
+        if _should_send_heartbeat(now_ts, last_hb):
+            total_2025 = sum(1 for s in slots if s.get('date', '').startswith('2025-'))
+            total_2026 = sum(1 for s in slots if s.get('date', '').startswith('2026-'))
+            subject = "[PACS] Heartbeat système actif"
+            body = (
+                f"Système OK {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Intervalle scan: {interval} s\n"
+                f"Total slots vus (2025): {total_2025}\n"
+                f"Total slots vus (2026): {total_2026}\n"
+            )
+            send_email(subject, body)
+            last_hb = now_ts
+            state["last_heartbeat_ts"] = last_hb
+            _save_heartbeat_state(state)
+
         time.sleep(interval)
 
 
@@ -196,6 +232,7 @@ def send_email(subject: str, body: str):
         print("Email envoyé.")
     except Exception as e:
         print(f"Erreur envoi email : {e}")
+
 
 
 
