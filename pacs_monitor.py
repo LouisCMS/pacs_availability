@@ -174,6 +174,19 @@ def run_monitor(interval=10):
         state = {"last_heartbeat_ts": 0}
     last_hb = state.get("last_heartbeat_ts", 0)
 
+    # --- Envoi mail test spécifique URGENT 2025 au démarrage ---
+    try:
+        test_subject = "🚨 [PACS] TEST URGENT 2025 — vérification système"
+        test_body = (
+            "Ceci est un test automatique du système de notification URGENT 2025.\n"
+            "Tout fonctionne correctement si vous recevez ce message.\n\n"
+            "Destinataires : Louis + Blandine."
+        )
+        send_email(test_subject, test_body, extra_to=["blandinedelaperriere@gmail.com"])
+        print("[TEST] Email URGENT 2025 envoyé au démarrage.")
+    except Exception as e:
+        print(f"[ERREUR] Envoi du mail test URGENT 2025 : {e}")
+
     while True:
         try:
             slots = get_all_slots()
@@ -188,19 +201,37 @@ def run_monitor(interval=10):
         if new_slots:
             print(f"\n=== NOUVEAUX CRÉNEAUX {datetime.now().strftime('%H:%M:%S')} ===")
             lines = []
+            urgent_2025 = []
             for s in new_slots:
                 line = f"{s['date']} {s['time']}"
                 print(f"• {line}")
                 lines.append(line)
+                if s["date"].startswith("2025-"):
+                    urgent_2025.append(line)
+
+            # Envoi général
             subject = f"[PACS] {len(new_slots)} nouveau(x) créneau(x)"
             body = "Nouveaux créneaux détectés:\n" + "\n".join(lines)
             send_email(subject, body)
+
+            # Envoi URGENT 2025 si au moins un
+            if urgent_2025:
+                urgent_subject = "🚨 [PACS] CRÉNEAU 2025 DISPONIBLE 🎯"
+                urgent_body = (
+                    "⚠️ Créneau 2025 détecté !\n\n" +
+                    "\n".join(urgent_2025) +
+                    "\n\nVérifiez immédiatement la disponibilité sur le site."
+                )
+                send_email(urgent_subject, urgent_body, extra_to=["blandinedelaperriere@gmail.com"])
+                print("[ALERTE] Email URGENT 2025 envoyé.")
+
             print("=" * 40)
             last_slots = slots
+
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Aucun nouveau créneau.")
 
-        # Heartbeat toutes les 8h (aucun envoi si < 8h depuis le dernier)
+        # Heartbeat toutes les 8h
         if _should_send_heartbeat(now_ts, last_hb):
             total_2025 = sum(1 for s in slots if s.get('date', '').startswith('2025-'))
             total_2026 = sum(1 for s in slots if s.get('date', '').startswith('2026-'))
@@ -219,7 +250,11 @@ def run_monitor(interval=10):
         time.sleep(interval)
 
 
-def send_email(subject: str, body: str):
+
+def send_email(subject: str, body: str, extra_to=None):
+    recipients = [os.environ["MAIL_TO"]]
+    if extra_to:
+        recipients.extend(extra_to)
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
     msg["From"] = MAIL_FROM
