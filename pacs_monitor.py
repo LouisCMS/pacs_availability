@@ -4,6 +4,31 @@ from datetime import datetime, date
 import re
 import time
 
+
+import smtplib
+from email.mime.text import MIMEText
+from email.utils import formatdate
+
+
+
+import os
+
+SMTP_HOST = os.environ.get("SMTP_HOST")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_USER = os.environ.get("SMTP_USER")
+SMTP_PASS = os.environ.get("SMTP_PASS")
+MAIL_TO   = os.environ.get("MAIL_TO", SMTP_USER)
+MAIL_FROM = os.environ.get("MAIL_FROM", SMTP_USER)
+
+missing = [k for k,v in {
+    "SMTP_HOST":SMTP_HOST, "SMTP_PORT":SMTP_PORT, "SMTP_USER":SMTP_USER, "SMTP_PASS":SMTP_PASS, "MAIL_TO":MAIL_TO, "MAIL_FROM":MAIL_FROM
+}.items() if v in (None, "")]
+if missing:
+    raise RuntimeError(f"Variables manquantes: {', '.join(missing)}")
+
+
+
+
 URLS_CANDIDATES = [
     "https://rdvma18.apps.paris.fr/rdvma18/jsp/site/Portal.jsp?page=appointment&view=getViewAppointmentCalendar&id_form=44",
     "https://rdvma18.apps.paris.fr/rdvma18/jsp/site/Portal.jsp?page=appointment&view=getViewAppointmentCalendar&id_form=44&anchor=step3",
@@ -15,12 +40,16 @@ session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 })
 
+
+
 # --- Regex ciblées (début uniquement) ---
 PAT_JSON_START = re.compile(r'"(?:start|startDate)"\s*:\s*"(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?Z?"')
 PAT_URL_BEGIN  = re.compile(r'(?:\b(?:beginning_date_time|ing_date_time|start|startDate)\s*=\s*)(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?Z?', re.IGNORECASE)
 PAT_JSON_END   = re.compile(r'"(?:end|endDate)"\s*:\s*"(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?Z?"')
 PAT_URL_END    = re.compile(r'(?:\b(?:ending_date_time|end|endDate)\s*=\s*)(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?Z?', re.IGNORECASE)
 PAT_ANY_ISO    = re.compile(r'(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?Z?')
+
+
 
 
 def fetch_first_soup():
@@ -123,21 +152,51 @@ def run_monitor(interval=10):
             continue
 
         new_slots = detect_new_slots(slots, last_slots)
-
         if new_slots:
             print(f"\n=== NOUVEAUX CRÉNEAUX {datetime.now().strftime('%H:%M:%S')} ===")
+            lines = []
             for s in new_slots:
-                print(f"📅 {s['date']} à {s['time']}")
-                send_whatsapp(f"Nouveau créneau PACS : {s['date']} à {s['time']}")
+                line = f"{s['date']} {s['time']}"
+                print(f"• {line}")
+                lines.append(line)
+            # Mail récapitulatif
+            subject = f"[PACS] {len(new_slots)} nouveau(x) créneau(x)"
+            body = "Nouveaux créneaux détectés:\n" + "\n".join(lines)
+            send_email(subject, body)
             print("=" * 40)
             last_slots = slots
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Aucun nouveau créneau.")
-            send_whatsapp(f"No news sorry")
+            # Test de notif mail (désactive-le après validation)
+            send_email("[PACS] test", f"Vérification {datetime.now().strftime('%H:%M:%S')}: aucun nouveau créneau.")
+
+        # if new_slots:
+        #     print(f"\n=== NOUVEAUX CRÉNEAUX {datetime.now().strftime('%H:%M:%S')} ===")
+        #     for s in new_slots:
+        #         print(f"📅 {s['date']} à {s['time']}")
+        #         send_whatsapp(f"Nouveau créneau PACS : {s['date']} à {s['time']}")
+        #     print("=" * 40)
+        #     last_slots = slots
+        # else:
+        #     print(f"[{datetime.now().strftime('%H:%M:%S')}] Aucun nouveau créneau.")
+        #     send_whatsapp(f"No news sorry")
         time.sleep(interval)
 
 
-import requests
+def send_email(subject: str, body: str):
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = MAIL_FROM
+    msg["To"] = MAIL_TO
+    msg["Date"] = formatdate(localtime=True)
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+        print("Email envoyé.")
+    except Exception as e:
+        print(f"Erreur envoi email : {e}")
+
 
 
 
