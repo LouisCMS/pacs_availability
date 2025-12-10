@@ -35,9 +35,7 @@ if missing:
 
 
 URLS_CANDIDATES = [
-    "https://rdvma18.apps.paris.fr/rdvma18/jsp/site/Portal.jsp?page=appointment&view=getViewAppointmentCalendar&id_form=44",
-    "https://rdvma18.apps.paris.fr/rdvma18/jsp/site/Portal.jsp?page=appointment&view=getViewAppointmentCalendar&id_form=44&anchor=step3",
-    "https://rdvma18.apps.paris.fr/rdvma18/jsp/site/Portal.jsp?page=appointment&id_form=44&anchor=step3",
+    "https://rdvma18.apps.paris.fr/rdvma18/jsp/site/Portal.jsp?page=appointment&view=getViewAppointmentCalendar&id_form=23"
 ]
 
 session = requests.Session()
